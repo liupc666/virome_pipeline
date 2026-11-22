@@ -1,0 +1,157 @@
+#!/bin/bash
+#SBATCH --job-name=virus_contig_pipe
+#SBATCH -p rna
+#SBATCH --nodes=1
+#SBATCH --cpus-per-task=8
+#SBATCH --array=1-1 #输入标本数
+
+set -euo pipefail
+
+# ===== 配置区，请修改 =====
+RAW_DIR="./rawdata"        # 原始fq目录
+SAMPLE_LIST="./sample_name.txt"  # 样本名
+THREAD_FASTP=8
+THREAD_BOWTIE2=8
+THREAD_MEGAHIT=8
+THREAD_GENOMAD=8
+THREAD_VS2=8
+THREAD_CHECKV=8
+# =========================
+
+SAMPLE=$(sed -n "${SLURM_ARRAY_TASK_ID}p" ${SAMPLE_LIST})
+R1_RAW=${RAW_DIR}/${SAMPLE}_1.fq.gz 
+R2_RAW=${RAW_DIR}/${SAMPLE}_2.fq.gz
+
+# 输出目录
+CLEANDATA_DIR="./cleandata/${SAMPLE}"
+BOWTIE2_DIR="./bowtie2_hr/${SAMPLE}"
+MEGAHIT_DIR="./contig_megahit/${SAMPLE}"
+VS2_DIR="./virsorter2/${SAMPLE}"
+VS2_CHECKV_DIR="./virsorter2/checkv/${SAMPLE}"
+GENOMAD_DIR="./genomad/${SAMPLE}"
+GENOMAD_CHECKV_DIR="./genomad/checkv/${SAMPLE}"
+VOTU="./votu"
+
+mkdir -p ${CLEANDATA_DIR} ${VS2_DIR} ${VS2_CHECKV_DIR} ${BOWTIE2_DIR} ${MEGAHIT_DIR} ${GENOMAD_DIR} ${GENOMAD_CHECKV_DIR} ${VOTU} logs
+
+########################################
+## Step1: fastp 质控，kneaddata环境
+########################################
+echo "==== Step1 fastp ${SAMPLE} ===="
+source activate kneaddata
+fastp -i ${R1_RAW} -I ${R2_RAW} \
+-o ${CLEANDATA_DIR}/${SAMPLE}_clean_R1.fq.gz \
+-O ${CLEANDATA_DIR}/${SAMPLE}_clean_R2.fq.gz \
+-w ${THREAD_FASTP} \
+-h ${CLEANDATA_DIR}/${SAMPLE}_fastp.html \
+-j ${CLEANDATA_DIR}/${SAMPLE}_fastp.json
+
+# 判断 fastp 是否成功，成功才删除原始双端
+if [ $? -eq 0 ]; then
+    echo "fastp 成功，删除原始数据：${R1_RAW} ${R2_RAW}"
+    rm -f "${R1_RAW}" "${R2_RAW}"
+else
+    echo "fastp 运行失败，保留原始数据！"
+    exit 1
+fi
+
+CLEAN_R1=${CLEANDATA_DIR}/${SAMPLE}_clean_R1.fq.gz
+CLEAN_R2=${CLEANDATA_DIR}/${SAMPLE}_clean_R2.fq.gz
+
+########################################
+## Step2: bowtie2 去宿主 hg38，kneaddata环境
+########################################
+echo "==== Step2 bowtie2 host removal ${SAMPLE} ===="
+source activate kneaddata
+bowtie2 -x ~/db/hg38/hg38 \
+-1 ${CLEAN_R1} -2 ${CLEAN_R2} \
+--un-conc-gz ${BOWTIE2_DIR}/${SAMPLE}_%.fq.gz \
+-S /dev/null --no-unal -p ${THREAD_BOWTIE2}
+
+# bowtie --un-conc-gz 输出命名：xxx_1.fq.gz xxx_2.fq.gz
+NOHOST_R1=${BOWTIE2_DIR}/${SAMPLE}_1.fq.gz
+NOHOST_R2=${BOWTIE2_DIR}/${SAMPLE}_2.fq.gz
+
+########################################
+## Step3: megahit组装，megahit环境
+########################################
+echo "==== Step3 megahit assemble ${SAMPLE} ===="
+source activate megahit
+megahit -1 ${NOHOST_R1} -2 ${NOHOST_R2} \
+-o ${MEGAHIT_DIR} -t ${THREAD_MEGAHIT}
+
+# megahit最终contig
+CONTIGS=${MEGAHIT_DIR}/final.contigs.fa
+
+## ---------------------------
+## Step4: virsorter2 病毒预测（vs2 环境）
+## ---------------------------
+echo "==== Step4 virsorter2 ${SAMPLE} ===="
+
+source activate vs2
+virsorter run \
+--keep-original-seq \
+-w "${VS2_DIR}" \
+-i "${CONTIGS}" \
+--min-length 2000 \
+--rm-tmpdir \
+--include-groups dsDNAphage,ssDNA,NCLDV,lavidaviridae \
+--min-score 0.5 \
+-j ${THREAD_VS2} \
+all
+
+# vs2 输出病毒序列：默认是 ${VS2_DIR}/final-viral-combined.fa
+VS2_VIR_FA="${VS2_DIR}/final-viral-combined.fa"
+
+########################################
+## Step5: checkv end_to_end 质量评估，checkv环境, vs2
+########################################
+echo "==== Step5 checkv_vs2 ${SAMPLE} ===="
+source activate checkv
+checkv end_to_end ${VS2_VIR_FA} ${VS2_CHECKV_DIR} -t ${THREAD_CHECKV} -d ~/db/checkv/checkv-db-v1.5
+
+VS2_QUAL_SUM=${VS2_CHECKV_DIR}/quality_summary.tsv
+
+
+########################################
+## Step6: genomad end-to-end 病毒预测，genomad环境
+########################################
+echo "==== Step6 genomad ${SAMPLE} ===="
+source activate genomad
+genomad end-to-end --cleanup \
+${CONTIGS} ${GENOMAD_DIR} \
+~/db/genomad/genomad_db
+
+GENOMAD_VIRUS=${GENOMAD_DIR}/final.contigs_summary/final.contigs_virus.fna
+
+########################################
+## Step7: checkv end_to_end 质量评估，checkv环境, genomad
+########################################
+echo "==== Step7 genomad_checkv ${SAMPLE} ===="
+source activate checkv
+checkv end_to_end ${GENOMAD_VIRUS} ${GENOMAD_CHECKV_DIR} -t ${THREAD_CHECKV} -d ~/db/checkv/checkv-db-v1.5
+
+GENOMAD_QUAL_SUM=${GENOMAD_CHECKV_DIR}/quality_summary.tsv
+
+########################################
+## Step8: seqkit筛选 Complete / High-quality / Medium-quality，kneaddata环境
+########################################
+echo "==== Step8 filter virus contigs ${SAMPLE} ===="
+source activate kneaddata
+
+awk -F '\t' '$8=="Complete" || $8=="High-quality" || $8=="Medium-quality" {print $1}' ${GENOMAD_QUAL_SUM} > ${GENOMAD_CHECKV_DIR}/id_list.txt
+sed 's/$/_1/' ${GENOMAD_CHECKV_DIR}/id_list.txt > ${GENOMAD_CHECKV_DIR}/id_list_1.txt
+
+seqkit grep -w 0 -f ${GENOMAD_CHECKV_DIR}/id_list_1.txt ${GENOMAD_CHECKV_DIR}/proviruses.fna > ${GENOMAD_CHECKV_DIR}/filtered_proviruses.fna
+seqkit grep -w 0 -f ${GENOMAD_CHECKV_DIR}/id_list.txt ${GENOMAD_CHECKV_DIR}/viruses.fna > ${GENOMAD_CHECKV_DIR}/filtered_viruses.fna
+
+awk -F '\t' '$8=="Complete" || $8=="High-quality" || $8=="Medium-quality" {print $1}' ${VS2_QUAL_SUM} > ${VS2_CHECKV_DIR}/id_list.txt
+sed 's/$/_1/' ${VS2_CHECKV_DIR}/id_list.txt > ${VS2_CHECKV_DIR}/id_list_1.txt
+
+seqkit grep -w 0 -f ${VS2_CHECKV_DIR}/id_list_1.txt ${VS2_CHECKV_DIR}/proviruses.fna > ${VS2_CHECKV_DIR}/filtered_proviruses.fna
+seqkit grep -w 0 -f ${VS2_CHECKV_DIR}/id_list.txt ${VS2_CHECKV_DIR}/viruses.fna > ${VS2_CHECKV_DIR}/filtered_viruses.fna
+
+
+cat ${GENOMAD_CHECKV_DIR}/filtered_proviruses.fna ${GENOMAD_CHECKV_DIR}/filtered_viruses.fna ${VS2_CHECKV_DIR}/filtered_proviruses.fna ${VS2_CHECKV_DIR}/filtered_viruses.fna > ${VOTU}/${SAMPLE}_vcontigs.fna
+
+echo "==== ${SAMPLE} pipeline finished ===="
