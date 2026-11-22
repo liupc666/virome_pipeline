@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --array=1-1 #输入标本数
 
-set -euo pipefail
+set -eo pipefail
 
 # ===== 配置区，请修改 =====
 RAW_DIR="./rawdata"        # 原始fq目录
@@ -25,14 +25,14 @@ R2_RAW=${RAW_DIR}/${SAMPLE}_2.fq.gz
 # 输出目录
 CLEANDATA_DIR="./cleandata/${SAMPLE}"
 BOWTIE2_DIR="./bowtie2_hr/${SAMPLE}"
-MEGAHIT_DIR="./contig_megahit/${SAMPLE}"
-VS2_DIR="./virsorter2/${SAMPLE}"
-VS2_CHECKV_DIR="./virsorter2/checkv/${SAMPLE}"
-GENOMAD_DIR="./genomad/${SAMPLE}"
-GENOMAD_CHECKV_DIR="./genomad/checkv/${SAMPLE}"
+MEGAHIT_DIR="./contig_megahit"
+VS2_DIR="./virsorter2"
+VS2_CHECKV_DIR="./virsorter2/checkv"
+GENOMAD_DIR="./genomad"
+GENOMAD_CHECKV_DIR="./genomad/checkv"
 VOTU="./votu"
 
-mkdir -p ${CLEANDATA_DIR} ${VS2_DIR} ${VS2_CHECKV_DIR} ${BOWTIE2_DIR} ${MEGAHIT_DIR} ${GENOMAD_DIR} ${GENOMAD_CHECKV_DIR} ${VOTU} logs
+mkdir -p ${CLEANDATA_DIR} ${VS2_DIR} ${VS2_CHECKV_DIR} ${BOWTIE2_DIR} ${MEGAHIT_DIR} ${GENOMAD_DIR} ${GENOMAD_CHECKV_DIR} ${VOTU} 
 
 ########################################
 ## Step1: fastp 质控，kneaddata环境
@@ -78,10 +78,10 @@ NOHOST_R2=${BOWTIE2_DIR}/${SAMPLE}_2.fq.gz
 echo "==== Step3 megahit assemble ${SAMPLE} ===="
 source activate megahit
 megahit -1 ${NOHOST_R1} -2 ${NOHOST_R2} \
--o ${MEGAHIT_DIR} -t ${THREAD_MEGAHIT}
+-o ${MEGAHIT_DIR}/${SAMPLE} -t ${THREAD_MEGAHIT}
 
 # megahit最终contig
-CONTIGS=${MEGAHIT_DIR}/final.contigs.fa
+CONTIGS=${MEGAHIT_DIR}/${SAMPLE}/final.contigs.fa
 
 ## ---------------------------
 ## Step4: virsorter2 病毒预测（vs2 环境）
@@ -91,7 +91,7 @@ echo "==== Step4 virsorter2 ${SAMPLE} ===="
 source activate vs2
 virsorter run \
 --keep-original-seq \
--w "${VS2_DIR}" \
+-w "${VS2_DIR}/${SAMPLE}" \
 -i "${CONTIGS}" \
 --min-length 2000 \
 --rm-tmpdir \
@@ -101,16 +101,16 @@ virsorter run \
 all
 
 # vs2 输出病毒序列：默认是 ${VS2_DIR}/final-viral-combined.fa
-VS2_VIR_FA="${VS2_DIR}/final-viral-combined.fa"
+VS2_VIR_FA="${VS2_DIR}/${SAMPLE}/final-viral-combined.fa"
 
 ########################################
 ## Step5: checkv end_to_end 质量评估，checkv环境, vs2
 ########################################
 echo "==== Step5 checkv_vs2 ${SAMPLE} ===="
 source activate checkv
-checkv end_to_end ${VS2_VIR_FA} ${VS2_CHECKV_DIR} -t ${THREAD_CHECKV} -d ~/db/checkv/checkv-db-v1.5
+checkv end_to_end ${VS2_VIR_FA} ${VS2_CHECKV_DIR}/${SAMPLE} -t ${THREAD_CHECKV} -d ~/db/checkv/checkv-db-v1.5
 
-VS2_QUAL_SUM=${VS2_CHECKV_DIR}/quality_summary.tsv
+VS2_QUAL_SUM=${VS2_CHECKV_DIR}/${SAMPLE}/quality_summary.tsv
 
 
 ########################################
@@ -119,19 +119,19 @@ VS2_QUAL_SUM=${VS2_CHECKV_DIR}/quality_summary.tsv
 echo "==== Step6 genomad ${SAMPLE} ===="
 source activate genomad
 genomad end-to-end --cleanup \
-${CONTIGS} ${GENOMAD_DIR} \
+${CONTIGS} ${GENOMAD_DIR}/${SAMPLE} \
 ~/db/genomad/genomad_db
 
-GENOMAD_VIRUS=${GENOMAD_DIR}/final.contigs_summary/final.contigs_virus.fna
+GENOMAD_VIRUS=${GENOMAD_DIR}/${SAMPLE}/final.contigs_summary/final.contigs_virus.fna
 
 ########################################
 ## Step7: checkv end_to_end 质量评估，checkv环境, genomad
 ########################################
 echo "==== Step7 genomad_checkv ${SAMPLE} ===="
 source activate checkv
-checkv end_to_end ${GENOMAD_VIRUS} ${GENOMAD_CHECKV_DIR} -t ${THREAD_CHECKV} -d ~/db/checkv/checkv-db-v1.5
+checkv end_to_end ${GENOMAD_VIRUS} ${GENOMAD_CHECKV_DIR}/${SAMPLE} -t ${THREAD_CHECKV} -d ~/db/checkv/checkv-db-v1.5
 
-GENOMAD_QUAL_SUM=${GENOMAD_CHECKV_DIR}/quality_summary.tsv
+GENOMAD_QUAL_SUM=${GENOMAD_CHECKV_DIR}/${SAMPLE}/quality_summary.tsv
 
 ########################################
 ## Step8: seqkit筛选 Complete / High-quality / Medium-quality，kneaddata环境
@@ -139,19 +139,19 @@ GENOMAD_QUAL_SUM=${GENOMAD_CHECKV_DIR}/quality_summary.tsv
 echo "==== Step8 filter virus contigs ${SAMPLE} ===="
 source activate kneaddata
 
-awk -F '\t' '$8=="Complete" || $8=="High-quality" || $8=="Medium-quality" {print $1}' ${GENOMAD_QUAL_SUM} > ${GENOMAD_CHECKV_DIR}/id_list.txt
-sed 's/$/_1/' ${GENOMAD_CHECKV_DIR}/id_list.txt > ${GENOMAD_CHECKV_DIR}/id_list_1.txt
+awk -F '\t' '$8=="Complete" || $8=="High-quality" || $8=="Medium-quality" {print $1}' ${GENOMAD_QUAL_SUM} > ${GENOMAD_CHECKV_DIR}/${SAMPLE}/id_list.txt
+sed 's/$/_1/' ${GENOMAD_CHECKV_DIR}/${SAMPLE}/id_list.txt > ${GENOMAD_CHECKV_DIR}/${SAMPLE}/id_list_1.txt
 
-seqkit grep -w 0 -f ${GENOMAD_CHECKV_DIR}/id_list_1.txt ${GENOMAD_CHECKV_DIR}/proviruses.fna > ${GENOMAD_CHECKV_DIR}/filtered_proviruses.fna
-seqkit grep -w 0 -f ${GENOMAD_CHECKV_DIR}/id_list.txt ${GENOMAD_CHECKV_DIR}/viruses.fna > ${GENOMAD_CHECKV_DIR}/filtered_viruses.fna
+seqkit grep -w 0 -f ${GENOMAD_CHECKV_DIR}/${SAMPLE}/id_list_1.txt ${GENOMAD_CHECKV_DIR}/${SAMPLE}/proviruses.fna > ${GENOMAD_CHECKV_DIR}/${SAMPLE}/filtered_proviruses.fna
+seqkit grep -w 0 -f ${GENOMAD_CHECKV_DIR}/${SAMPLE}/id_list.txt ${GENOMAD_CHECKV_DIR}/${SAMPLE}/viruses.fna > ${GENOMAD_CHECKV_DIR}/${SAMPLE}/filtered_viruses.fna
 
-awk -F '\t' '$8=="Complete" || $8=="High-quality" || $8=="Medium-quality" {print $1}' ${VS2_QUAL_SUM} > ${VS2_CHECKV_DIR}/id_list.txt
-sed 's/$/_1/' ${VS2_CHECKV_DIR}/id_list.txt > ${VS2_CHECKV_DIR}/id_list_1.txt
+awk -F '\t' '$8=="Complete" || $8=="High-quality" || $8=="Medium-quality" {print $1}' ${VS2_QUAL_SUM} > ${VS2_CHECKV_DIR}/${SAMPLE}/id_list.txt
+sed 's/$/_1/' ${VS2_CHECKV_DIR}/${SAMPLE}/id_list.txt > ${VS2_CHECKV_DIR}/${SAMPLE}/id_list_1.txt
 
-seqkit grep -w 0 -f ${VS2_CHECKV_DIR}/id_list_1.txt ${VS2_CHECKV_DIR}/proviruses.fna > ${VS2_CHECKV_DIR}/filtered_proviruses.fna
-seqkit grep -w 0 -f ${VS2_CHECKV_DIR}/id_list.txt ${VS2_CHECKV_DIR}/viruses.fna > ${VS2_CHECKV_DIR}/filtered_viruses.fna
+seqkit grep -w 0 -f ${VS2_CHECKV_DIR}/${SAMPLE}/id_list_1.txt ${VS2_CHECKV_DIR}/${SAMPLE}/proviruses.fna > ${VS2_CHECKV_DIR}/${SAMPLE}/filtered_proviruses.fna
+seqkit grep -w 0 -f ${VS2_CHECKV_DIR}/${SAMPLE}/id_list.txt ${VS2_CHECKV_DIR}/${SAMPLE}/viruses.fna > ${VS2_CHECKV_DIR}/${SAMPLE}/filtered_viruses.fna
 
 
-cat ${GENOMAD_CHECKV_DIR}/filtered_proviruses.fna ${GENOMAD_CHECKV_DIR}/filtered_viruses.fna ${VS2_CHECKV_DIR}/filtered_proviruses.fna ${VS2_CHECKV_DIR}/filtered_viruses.fna > ${VOTU}/${SAMPLE}_vcontigs.fna
+cat ${GENOMAD_CHECKV_DIR}/${SAMPLE}/filtered_proviruses.fna ${GENOMAD_CHECKV_DIR}/${SAMPLE}/filtered_viruses.fna ${VS2_CHECKV_DIR}/${SAMPLE}/filtered_proviruses.fna ${VS2_CHECKV_DIR}/${SAMPLE}/filtered_viruses.fna > ${VOTU}/${SAMPLE}_vcontigs.fna
 
 echo "==== ${SAMPLE} pipeline finished ===="
