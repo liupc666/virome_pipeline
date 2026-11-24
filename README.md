@@ -1,21 +1,22 @@
+```text
 work_dir/
 ├── cleandata/          # fastp clean fq
-├── bowtie2_hr/         # bowtie2去宿主后的非宿主fq
-├── contig_megahit/     # megahit组装结果
-└── genomad/
-    ├── ${sample}/      # genomad原始输出
-    └── checkv/
-        └── ${sample}/  # checkv end_to_end输出
-└── vs2/
-    ├── ${sample}/      # vs2原始输出
-    └── checkv/
-        └── ${sample}/  # checkv end_to_end输出
+├── bowtie2_hr/         # bowtie2 去宿主后的非宿主 fq
+├── contig_megahit/     # megahit 组装结果
+├── genomad/
+│   ├── ${sample}/      # genomad 原始输出
+│   └── checkv/
+│       └── ${sample}/  # checkv end_to_end 输出
+├── vs2/
+│   ├── ${sample}/      # vs2 原始输出
+│   └── checkv/
+│       └── ${sample}/  # checkv end_to_end 输出
 └── votu/
-    ├── ${sample}_vcontigs.fna/      # 每个样本的病毒序列输出（vs2和genomad识别的序列）
-    └── all_vcontigs.fna             # 所有样本的病毒序列输出
-    └── votu_raw.fna                 # cd-hit聚类结果
-    └── votu.fna                     # vOTU重命名后的结果
-
+    ├── ${sample}_vcontigs.fna   # 每个样本的病毒序列输出（vs2 和 genomad 识别的序列）
+    ├── all_vcontigs.fna         # 所有样本的病毒序列输出
+    ├── votu_raw.fna             # cd-hit 聚类结果
+    └── votu.fna                 # vOTU 重命名后的结果
+```
 
 
 1.viral_identify使用说明 \
