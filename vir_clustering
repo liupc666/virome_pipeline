@@ -1,0 +1,48 @@
+#!/bin/bash
+#SBATCH --job-name=virus_cdhit_votu
+#SBATCH -p rna
+#SBATCH --nodes=1
+#SBATCH --cpus-per-task=3
+
+
+# 配置
+VOTU_DIR="./votu"
+OUT_DIR="./votu"
+CONDA_ENV="cdhit"
+CDHIT_OPTS="-c 0.95 -aS 0.85 -T 3 -M 0"
+
+mkdir -p "${OUT_DIR}"
+
+# 1. 合并所有样本的 vcontigs
+COMBINED_FNA="${OUT_DIR}/all_vcontigs.fna"
+cat "${VOTU_DIR}"/*_vcontigs.fna > "${COMBINED_FNA}"
+
+# 2. cd-hit-est 聚类
+conda run -n "${CONDA_ENV}" cd-hit-est ${CDHIT_OPTS} \
+  -i "${COMBINED_FNA}" \
+  -o "${OUT_DIR}/votu_raw.fna"
+
+# 代表序列文件
+REP_FNA="${OUT_DIR}/votu_raw.fna"
+RENAMED_FNA="${OUT_DIR}/votu.fna"
+
+# 3. 统计 vOTU 数量，自动确定编号宽度
+N=$(grep -c "^>" "${REP_FNA}")
+if [[ $N -ge 10000 ]]; then
+  WIDTH=5
+elif [[ $N -ge 1000 ]]; then
+  WIDTH=4
+else
+  WIDTH=3
+fi
+
+# 4. 重命名为 vOTU_0001, vOTU_0002 ...
+awk -v w="${WIDTH}" '
+  BEGIN{id=1}
+  /^>/{printf ">vOTU_%0"w"d\n", id++; next}
+  {print}
+' "${REP_FNA}" > "${RENAMED_FNA}"
+
+echo "Done!"
+echo "Total vOTU: ${N}"
+echo "Final file: ${RENAMED_FNA}"
