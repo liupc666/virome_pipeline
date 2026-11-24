@@ -1,10 +1,30 @@
+work_dir/
+├── cleandata/          # fastp clean fq
+├── bowtie2_hr/         # bowtie2去宿主后的非宿主fq
+├── contig_megahit/     # megahit组装结果
+└── genomad/
+    ├── ${sample}/      # genomad原始输出
+    └── checkv/
+        └── ${sample}/  # checkv end_to_end输出
+└── vs2/
+    ├── ${sample}/      # vs2原始输出
+    └── checkv/
+        └── ${sample}/  # checkv end_to_end输出
+└── votu/
+    ├── ${sample}_vcontigs.fna/      # 每个样本的病毒序列输出（vs2和genomad识别的序列）
+    └── all_vcontigs.fna             # 所有样本的病毒序列输出
+    └── votu_raw.fna                 # cd-hit聚类结果
+    └── votu.fna                     # vOTU重命名后的结果
+
+
+
 1.viral_identify使用说明 \
 新建工作目录./ \
-确保./rawdata下存放原始双端数据，格式：样本名_1.fq.gz和样本名_2.fq.gz \
+确保./rawdata下存放原始双端数据，格式：${sample}_1.fq.gz和${sample}_2.fq.gz \
 确保存在样本名文件./sample_name.txt，每行为样本名 \
 多样本并行作业需修改第6行#SBATCH --array参数 \
 在工作目录下，sbatch ~/scripts/pipeline/vir_identify.sh \
-最终在votu文件夹中生存每个样本的候选病毒序列，样本名_vcontigs.fna
+最终在votu文件夹中生存每个样本的候选病毒序列，${sample}_vcontigs.fna
 
 
 2.vir_clustering使用说明 \
